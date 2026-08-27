@@ -1,0 +1,87 @@
+name: Temporary Pexels Render
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - '.github/workflows/pexels-render.yml'
+      - 'tools/pexels_render_audio.py'
+
+permissions:
+  contents: read
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install FFmpeg
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg
+      - name: Download Pexels clips
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p media
+          urls=(
+            'https://videos.pexels.com/video-files/5895608/5895608-uhd_3840_2160_30fps.mp4'
+            'https://videos.pexels.com/video-files/9950685/9950685-uhd_4096_2160_25fps.mp4'
+            'https://videos.pexels.com/video-files/9259034/9259034-uhd_3840_2160_30fps.mp4'
+            'https://videos.pexels.com/video-files/5058739/5058739-uhd_3840_2160_30fps.mp4'
+            'https://videos.pexels.com/video-files/9724135/9724135-hd_1440_1080_30fps.mp4'
+            'https://videos.pexels.com/video-files/36145888/15328677_3840_2160_25fps.mp4'
+            'https://videos.pexels.com/video-files/7815663/7815663-uhd_3840_2160_25fps.mp4'
+          )
+          for i in "${!urls[@]}"; do
+            n=$((i+1)); echo "Downloading $n/7"
+            curl -fL --retry 5 --retry-delay 2 --connect-timeout 30 --max-time 900 -A 'Mozilla/5.0' "${urls[$i]}" -o "media/clip${n}.mp4"
+          done
+      - name: Build soundtrack
+        run: python3 tools/pexels_render_audio.py
+      - name: Build 30s edit
+        shell: bash
+        run: |
+          set -euo pipefail
+          FONT='/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'
+          ffmpeg -y \
+            -ss 0.2 -t 4.3 -i media/clip1.mp4 \
+            -ss 0.3 -t 4.3 -i media/clip2.mp4 \
+            -ss 0.4 -t 4.3 -i media/clip3.mp4 \
+            -ss 0.2 -t 4.3 -i media/clip4.mp4 \
+            -ss 0.2 -t 4.3 -i media/clip5.mp4 \
+            -ss 0.3 -t 4.3 -i media/clip6.mp4 \
+            -ss 0.4 -t 4.3 -i media/clip7.mp4 \
+            -i soundtrack.wav \
+            -filter_complex "
+              [0:v]setpts=PTS/1.03,scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720,fps=30,eq=contrast=1.09:saturation=1.08:brightness=-0.015[v0];
+              [1:v]setpts=PTS/1.03,scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720,fps=30,eq=contrast=1.09:saturation=1.08:brightness=-0.015[v1];
+              [2:v]setpts=PTS/1.03,scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720,fps=30,eq=contrast=1.09:saturation=1.10:brightness=-0.01[v2];
+              [3:v]setpts=PTS/1.03,scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720,fps=30,eq=contrast=1.08:saturation=1.08:brightness=-0.015[v3];
+              [4:v]setpts=PTS/1.03,scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720,fps=30,eq=contrast=1.10:saturation=1.06:brightness=-0.02[v4];
+              [5:v]setpts=PTS/1.03,scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720,fps=30,eq=contrast=1.08:saturation=1.10:brightness=-0.005[v5];
+              [6:v]setpts=PTS/1.03,scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720,fps=30,eq=contrast=1.08:saturation=1.08:brightness=-0.01[v6];
+              [v0][v1][v2][v3][v4][v5][v6]concat=n=7:v=1:a=0,trim=duration=30,setpts=PTS-STARTPTS,
+              vignette=PI/5,
+              drawbox=x=0:y=0:w=iw:h=64:color=black@0.18:t=fill,
+              drawbox=x=0:y=ih-64:w=iw:h=64:color=black@0.18:t=fill,
+              drawtext=fontfile=${FONT}:text='ONE LIFE':fontsize=96:fontcolor=white:x=74:y=h*0.60:enable='between(t,0.2,3.7)',
+              drawtext=fontfile=${FONT}:text='PUSH':fontsize=118:fontcolor=white:x=74:y=h*0.60:enable='between(t,4.1,8.0)',
+              drawtext=fontfile=${FONT}:text='BREAK THROUGH':fontsize=72:fontcolor=white:x=74:y=h*0.60:enable='between(t,8.3,12.1)',
+              drawtext=fontfile=${FONT}:text='GO':fontsize=132:fontcolor=white:x=74:y=h*0.60:enable='between(t,12.4,16.2)',
+              drawtext=fontfile=${FONT}:text='ALIVE':fontsize=110:fontcolor=white:x=74:y=h*0.60:enable='between(t,16.5,20.4)',
+              drawtext=fontfile=${FONT}:text='RISE':fontsize=122:fontcolor=white:x=74:y=h*0.60:enable='between(t,20.7,24.5)',
+              drawtext=fontfile=${FONT}:text='KEEP MOVING.':fontsize=86:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2:enable='between(t,25.2,30)',
+              fade=t=in:st=0:d=0.15,fade=t=out:st=29.55:d=0.45[outv]
+            " \
+            -map '[outv]' -map 7:a -t 30 \
+            -c:v libx264 -preset medium -crf 19 -pix_fmt yuv420p \
+            -c:a aac -b:a 192k -movflags +faststart ONE_LIFE_PEXELS_BROLL_30S.mp4
+          ffprobe -v error -show_entries format=duration,size -of default=nw=1 ONE_LIFE_PEXELS_BROLL_30S.mp4
+      - name: Upload result
+        uses: actions/upload-artifact@v4
+        with:
+          name: one-life-pexels-broll-30s
+          path: ONE_LIFE_PEXELS_BROLL_30S.mp4
+          retention-days: 3
